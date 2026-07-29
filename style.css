@@ -168,6 +168,26 @@ body {
 .asset-note code { background: rgba(176, 114, 230, 0.16); padding: 1px 6px; border-radius: 6px; font-size: 12.5px; }
 .asset-note .asset-path { font-size: 11.5px; opacity: 0.7; word-break: break-all; }
 
+/* ---------- 재시작 버튼(물고기 사망 시) ---------- */
+.restart-btn {
+  position: absolute; z-index: 20;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; gap: 8px;
+  font: inherit; font-weight: 800; font-size: 16px; color: #fff;
+  padding: 14px 24px; border: none; border-radius: 999px; cursor: pointer;
+  background: linear-gradient(180deg, #c288ee, #a45fe0);
+  box-shadow: 0 12px 30px rgba(90, 45, 130, 0.45), inset 0 1px 0 rgba(255,255,255,0.4);
+  backdrop-filter: blur(4px);
+  animation: pop-in 0.35s ease both;
+}
+.restart-btn:hover { filter: brightness(1.06); }
+.restart-btn:active { transform: translate(-50%, -50%) scale(0.97); }
+.restart-emoji { transform: scaleX(-1); font-size: 18px; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
 /* ---------- 로딩 ---------- */
 .loading {
   position: absolute; inset: 0; z-index: 40;

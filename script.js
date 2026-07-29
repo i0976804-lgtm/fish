@@ -55,6 +55,7 @@ const hintEl      = document.getElementById('hint');
 const camBtn      = document.getElementById('camBtn');
 const addFishBtn  = document.getElementById('addFishBtn');
 const resetBtn    = document.getElementById('resetBtn');
+const restartBtn  = document.getElementById('restartBtn');
 const camWrap     = document.getElementById('camWrap');
 const camVideo    = document.getElementById('cam');
 const handCursor  = document.getElementById('handCursor');
@@ -325,12 +326,27 @@ function randomTarget() {
 /* =========================================================================
    4. 물고기 & 먹이
    ========================================================================= */
+// 측면 스프라이트에서 눈의 대략적 위치(비율) — 죽었을 때 X 표시에 사용
+const EYE_SIDE = { x: 0.70, y: 0.40 };
+
+/* 마우스 커서 추적(어항 내부 좌표). 일정 시간 움직임이 없으면 "정지"로 보고
+   물고기가 커서 주위를 맴돌게 한다. pointermove 핸들러가 값을 갱신한다. */
+const cursor = { x: 0, y: 0, inside: false, lastMove: 0 };
+function cursorIsResting() {
+  return cursor.inside && insideWater(cursor.x, cursor.y, 1.0) && (Date.now() - cursor.lastMove > 450);
+}
+
 class Fish {
   constructor(sizeFactor) {
     const p = randomTarget();
     this.x = p.x; this.y = p.y;
     this.vx = rand(-0.6, 0.6); this.vy = 0;
-    this.sizeFactor = sizeFactor;      // 몸 너비 = sizeFactor * 어항너비
+    this.sizeFactor = sizeFactor;      // 몸 너비 = sizeFactor * 어항너비 (고정)
+    this.eaten = 0;                    // 먹은 먹이 수(참고용)
+    this.dead = false; this.deadAt = 0;
+    this.held = false;                 // 마우스로 잡고 드래그 중인지
+    this.orbitPhase = rand(0, 6.28);   // 커서 주위를 맴돌 때 개체별 위상
+    this.smileUntil = 0;               // 문질문질 → 정면(웃는 얼굴) 유지 시각
     this.target = randomTarget();
     this.retarget = rand(80, 200);
     this.face = this.vx < 0 ? -1 : 1;  // 측면 스프라이트 좌우 반전용
@@ -341,28 +357,70 @@ class Fish {
     this.viewHold = 0;                 // 스프라이트 전환 히스테리시스
   }
   get bodyW() { return this.sizeFactor * WATER.w; }
+  get smiling() { return Date.now() < this.smileUntil; }
+
+  // 먹이 1개 섭취 (과식 발동은 "10초 내 급여량"으로 전역 판정 → registerFeed)
+  eat() {
+    this.eaten++;
+    this.happy = 40;
+  }
+  die() {
+    this.dead = true; this.deadAt = Date.now();
+    this.vx = rand(-0.4, 0.4); this.vy = -0.5;     // 살짝 떠오르며 시작
+    if (firstDeathAt === 0) firstDeathAt = Date.now();
+  }
 
   update(foods) {
     const sf = WATER.w / 620;          // 어항 크기에 비례한 속도 보정
+
+    // --- 죽은 물고기: 배를 위로 하고 수면으로 떠올라 흔들림 ---
+    if (this.dead) {
+      this.vy += (-0.35 - this.vy) * 0.03;                 // 부력(위로)
+      this.vx *= 0.985;
+      this.x += this.vx + Math.sin(Date.now() / 500 + this.wob) * 0.25;
+      this.y += this.vy;
+      const topY = WATER.cy - WATER.ry * 0.72;             // 수면 근처에서 멈춤
+      if (this.y < topY) { this.y = topY; this.vy *= -0.2; }
+      const c = clampToWater(this.x, this.y, this.bodyW * 0.4);
+      if (c.hit) { this.x = c.x; this.vx *= -0.5; }
+      this.wob += 0.05;
+      return;
+    }
+
+    // --- 손으로 잡고 드래그 중: AI 정지, 위치는 드래그 핸들러가 제어 ---
+    if (this.held) {
+      this.view = 'front';           // 잡으면 이쪽을 바라봄
+      this.vx = 0; this.vy = 0;
+      this.wob += 0.1;
+      return;
+    }
+
     let feeding = false, nearest = null, nd = Infinity;
     for (const f of foods) {
-      if (f.settledLife !== undefined && f.eaten) continue;
       const d = dist(this.x, this.y, f.x, f.y);
       if (d < nd) { nd = d; nearest = f; }
     }
 
     if (nearest) {
+      // 먹이가 있으면 최우선으로 다가가 먹는다
       feeding = true;
       this.target = { x: nearest.x, y: nearest.y };
-      if (nd < this.bodyW * 0.45) { nearest.eaten = true; this.happy = 40; }
+      if (nd < this.bodyW * 0.45) { nearest.eaten = true; this.eat(); }
+    } else if (cursorIsResting()) {
+      // 마우스를 가만히 두면 커서 주위를 원을 그리며 맴돈다
+      const rad = this.bodyW * 1.15 + 16 * sf;
+      const ang = Date.now() * 0.0022 + this.orbitPhase;
+      const t = clampToWater(cursor.x + Math.cos(ang) * rad, cursor.y + Math.sin(ang) * rad, this.bodyW * 0.4);
+      this.target = { x: t.x, y: t.y };
     } else if (--this.retarget <= 0) {
       this.target = randomTarget(); this.retarget = rand(80, 220);
     }
 
-    // 조향(steering)
+    // 조향(steering) — 문질문질(웃는) 중이면 느긋하게 맴돈다
     const dx = this.target.x - this.x, dy = this.target.y - this.y;
     const d = Math.hypot(dx, dy) || 1;
-    const speed = (feeding ? this.maxSpeed * 1.7 : this.maxSpeed) * sf;
+    const calm = this.smiling ? 0.35 : 1;
+    const speed = (feeding ? this.maxSpeed * 1.7 : this.maxSpeed) * sf * calm;
     const ease = feeding ? 0.10 : 0.04;
     this.vx += ((dx / d) * speed - this.vx) * ease;
     this.vy += ((dy / d) * speed - this.vy) * ease;
@@ -378,27 +436,33 @@ class Fish {
     if (this.happy > 0) this.happy--;
     this.wob += 0.2;
 
-    /* 스프라이트 선택: 수평 이동이 뚜렷하면 측면, 수직/정지 위주면 정면.
-       히스테리시스로 잦은 깜빡임 방지. */
-    const sp = Math.hypot(this.vx, this.vy) + 0.001;
-    const horiz = Math.abs(this.vx) / sp;      // 0(수직)~1(수평)
-    const wantFront = horiz < 0.42;
-    if (wantFront !== (this.view === 'front')) {
-      if (++this.viewHold > 16) { this.view = wantFront ? 'front' : 'side'; this.viewHold = 0; }
-    } else this.viewHold = 0;
+    /* 스프라이트 선택.
+       - 문질문질(smiling) 중이면 강제로 정면(웃는 얼굴).
+       - 아니면 수평 이동이 뚜렷하면 측면, 수직/정지 위주면 정면(히스테리시스). */
+    if (this.smiling) { this.view = 'front'; this.viewHold = 0; }
+    else {
+      const sp = Math.hypot(this.vx, this.vy) + 0.001;
+      const wantFront = Math.abs(this.vx) / sp < 0.42;
+      if (wantFront !== (this.view === 'front')) {
+        if (++this.viewHold > 16) { this.view = wantFront ? 'front' : 'side'; this.viewHold = 0; }
+      } else this.viewHold = 0;
+    }
   }
 
   draw(ctx) {
-    const sprite = (this.view === 'front' && fishFront) ? fishFront : fishSide;
+    if (this.dead) { this.drawDead(ctx); return; }
+
+    const front = this.view === 'front' && fishFront;
+    const sprite = front ? fishFront : fishSide;
     if (!sprite) return;
-    const bw = this.bodyW;
-    const bh = bw * (sprite.height / sprite.width);
+    const bw = this.bodyW, bh = bw * (sprite.height / sprite.width);
     const tilt = clamp(Math.atan2(this.vy, Math.abs(this.vx) + 0.001), -0.35, 0.35);
-    const pop = this.happy > 0 ? 1 + (this.happy / 40) * 0.07 : 1;
+    let pop = this.happy > 0 ? 1 + (this.happy / 40) * 0.07 : 1;
+    if (this.smiling) pop *= 1.06;     // 웃을 때 살짝 통통하게
 
     ctx.save();
     ctx.translate(this.x, this.y);
-    if (this.view === 'front') {
+    if (front) {
       // 정면: 진행 방향으로 살짝 기울이고, 좌우 이동감만 약하게 반영
       ctx.rotate(clamp(this.vx * 0.03, -0.2, 0.2));
       ctx.scale(pop, pop);
@@ -408,6 +472,31 @@ class Fish {
       ctx.scale(this.face * pop, pop);
     }
     ctx.drawImage(sprite, -bw / 2, -bh / 2, bw, bh);
+    ctx.restore();
+  }
+
+  // 죽은 모습: 측면 스프라이트를 상하 반전(배 위로) + 회색빛 + 눈에 X
+  drawDead(ctx) {
+    const sprite = fishSide; if (!sprite) return;
+    const bw = this.bodyW, bh = bw * (sprite.height / sprite.width);
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.scale(this.face, -1);                         // 상하 반전(배 위로)
+    ctx.globalAlpha = 0.92;
+    const canFilter = 'filter' in ctx;
+    if (canFilter) ctx.filter = 'grayscale(0.55) brightness(1.08)';
+    ctx.drawImage(sprite, -bw / 2, -bh / 2, bw, bh);
+    if (canFilter) ctx.filter = 'none';
+    // 눈 위치에 검은 X (스프라이트와 같은 변환 공간이라 뒤집혀도 눈에 정확히 겹침)
+    const ex = -bw / 2 + EYE_SIDE.x * bw, ey = -bh / 2 + EYE_SIDE.y * bh, s = bw * 0.06;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#1e1e1e';
+    ctx.lineWidth = Math.max(1.5, bw * 0.022);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(ex - s, ey - s); ctx.lineTo(ex + s, ey + s);
+    ctx.moveTo(ex + s, ey - s); ctx.lineTo(ex - s, ey + s);
+    ctx.stroke();
     ctx.restore();
   }
 }
@@ -492,6 +581,13 @@ class Bubble {
 const fishes = [], foods = [], bubbles = [];
 const MAX_BUBBLES = 7;          // 동시 최대치(과하지 않게)
 let bubbleTimer = 40;           // 다음 물방울까지 프레임 수
+let firstDeathAt = 0;           // 첫 죽음 시각(0=없음) → 5초 뒤 재시작 버튼
+
+/* 과식 이벤트: "10초(FEED_WINDOW) 안에 먹이 30개(FEED_THRESHOLD) 이상"을
+   주면 발동. 그 속도에 못 미치면 발동하지 않는다. feedTimes 에 각 먹이 투하
+   시각을 기록하고, 최근 10초 개수가 임계치를 넘으면 이벤트 1회 발동 후 리셋. */
+const FEED_WINDOW = 10000, FEED_THRESHOLD = 30;
+let feedTimes = [];
 
 const MAX_FISH = 10;
 function initScene() {
@@ -527,27 +623,111 @@ function loop() {
   for (const f of foods) { f.update(); f.draw(ctx); }
   for (let i = foods.length - 1; i >= 0; i--) if (foods[i].eaten || foods[i].life <= 0) foods.splice(i, 1);
   for (const fish of fishes) { fish.update(foods); fish.draw(ctx); }
+
+  // 죽은 물고기가 있으면 5초 뒤 "다시 시작하기" 버튼 노출
+  const anyDead = firstDeathAt !== 0;
+  if (anyDead && Date.now() - firstDeathAt >= 5000) restartBtn.hidden = false;
+
   requestAnimationFrame(loop);
 }
 
 /* =========================================================================
    5. 먹이 주기 입력
    ========================================================================= */
-function dropFoodAtClient(clientX, clientY) {
+// client 좌표 → 캔버스(어항) 로컬 좌표
+function canvasXY(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
-  const x = clientX - rect.left, y = clientY - rect.top;
-  if (!insideWater(x, y, 1.04)) return;          // 물 밖이면 무시
-  const c = clampToWater(x, y, 8);
-  foods.push(new Food(c.x, c.y));
-  if (Math.random() < 0.6) foods.push(new Food(c.x + rand(-8, 8), c.y - rand(4, 12)));
+  return { x: clientX - rect.left, y: clientY - rect.top };
+}
+// 좌표 아래의 살아있는 물고기(가장 가까운 것) 찾기
+function fishAt(x, y) {
+  let hit = null, hd = Infinity;
+  for (const f of fishes) {
+    if (f.dead) continue;
+    const d = dist(x, y, f.x, f.y);
+    if (d < f.bodyW * 0.6 && d < hd) { hd = d; hit = f; }
+  }
+  return hit;
+}
+
+// 먹이 투하 + 급여 기록(과식 판정용)
+function dropFoodAtClient(clientX, clientY) {
+  const p = canvasXY(clientX, clientY);
+  if (!insideWater(p.x, p.y, 1.04)) return;      // 물 밖이면 무시
+  const c = clampToWater(p.x, p.y, 8);
+  const now = Date.now();
+  foods.push(new Food(c.x, c.y)); registerFeed(now);
+  if (Math.random() < 0.6) { foods.push(new Food(c.x + rand(-8, 8), c.y - rand(4, 12))); registerFeed(now); }
   fadeHint();
 }
+
+// 급여 기록 → 최근 10초 개수가 임계치 이상이면 과식 이벤트 1회 발동
+function registerFeed(now) {
+  feedTimes.push(now);
+  const cutoff = now - FEED_WINDOW;
+  while (feedTimes.length && feedTimes[0] < cutoff) feedTimes.shift();  // 오래된 기록 제거
+  if (feedTimes.length >= FEED_THRESHOLD) {
+    feedTimes = [];            // 창 리셋(연속 발동 방지)
+    triggerOverfeed();
+  }
+}
+
+// 과식 이벤트: 살아있는 물고기 중 하나에게 랜덤으로 새끼 탄생 or 죽음
+function triggerOverfeed() {
+  const alive = fishes.filter(f => !f.dead && !f.held);
+  if (!alive.length) return;
+  const fish = alive[Math.floor(Math.random() * alive.length)];
+  if (Math.random() < 0.5 && fishes.length < MAX_FISH) {
+    fishes.push(new Fish(rand(0.08, 0.11)));   // 새끼 물고기 탄생
+  } else {
+    fish.die();                                // 과식으로 죽음
+  }
+}
+
+/* ---- 포인터: 커서 추적 · 물고기 드래그 · 문질문질 · 먹이 주기 ---- */
+let draggingFish = null;
 
 bowl.addEventListener('pointerdown', (e) => {
   if (placingKey !== null) return;               // 장식 배치 모드면 배치가 처리
   if (e.target.closest('.deco')) return;         // 장식 드래그 중이면 무시
-  dropFoodAtClient(e.clientX, e.clientY);
+  const p = canvasXY(e.clientX, e.clientY);
+  const f = fishAt(p.x, p.y);
+  if (f) {                                       // 물고기를 잡으면 → 드래그 시작(먹이 X)
+    draggingFish = f; f.held = true;
+    try { bowl.setPointerCapture(e.pointerId); } catch (_) {}
+    return;
+  }
+  dropFoodAtClient(e.clientX, e.clientY);         // 빈 물 클릭 → 먹이
 });
+
+/* pointermove: 커서 위치 갱신 + (드래그 중이면) 물고기 이동 +
+   문질문질(커서를 물고기 위에서 움직이면 정면 웃는 얼굴 2초 유지). */
+bowl.addEventListener('pointermove', (e) => {
+  const p = canvasXY(e.clientX, e.clientY);
+  cursor.x = p.x; cursor.y = p.y; cursor.inside = true; cursor.lastMove = Date.now();
+
+  if (draggingFish) {                            // 드래그: 물고기를 물 안에서 이동
+    const c = clampToWater(p.x, p.y, draggingFish.bodyW * 0.45);
+    draggingFish.x = c.x; draggingFish.y = c.y;
+    return;
+  }
+  if (placingKey !== null) return;
+  for (const f of fishes) {                       // 문질문질 → 웃는 얼굴
+    if (f.dead) continue;
+    if (dist(p.x, p.y, f.x, f.y) < f.bodyW * 0.6) f.smileUntil = Date.now() + 2000;
+  }
+});
+
+function endFishDrag(e) {
+  if (!draggingFish) return;
+  draggingFish.held = false;
+  draggingFish.smileUntil = Date.now() + 800;     // 놓으면 잠깐 웃는 얼굴
+  draggingFish = null;
+  try { bowl.releasePointerCapture(e.pointerId); } catch (_) {}
+}
+bowl.addEventListener('pointerup', endFishDrag);
+bowl.addEventListener('pointercancel', endFishDrag);
+bowl.addEventListener('pointerleave', () => { cursor.inside = false; });
 
 let hintFaded = false;
 function fadeHint() { if (!hintFaded) { hintFaded = true; hintEl.style.opacity = '0'; } }
@@ -649,13 +829,26 @@ function makeDraggable(el) {
 
 addFishBtn.addEventListener('click', addFish);
 
+// 물고기만 건강한 한 마리로 되돌린다 (죽음/과식 상태 해제)
+function respawnFish() {
+  fishes.length = 0;
+  fishes.push(new Fish(0.18));
+  foods.length = 0;
+  feedTimes = [];              // 급여 기록 초기화
+  draggingFish = null;
+  firstDeathAt = 0;
+  restartBtn.hidden = true;
+}
+
+// 초기화: 장식·먹이 제거 + 물고기 한 마리로
 resetBtn.addEventListener('click', () => {
   decoLayer.replaceChildren();   // 배치한 장식 모두 제거
-  foods.length = 0;              // 먹이 제거
-  fishes.length = 0;             // 물고기 초기화 →
-  fishes.push(new Fish(0.18));   // 기본 한 마리만 남김
+  respawnFish();
   cancelPlacing();
 });
+
+// 죽었을 때 나오는 "다시 시작하기": 장식은 그대로 두고 물고기만 되살림
+restartBtn.addEventListener('click', respawnFish);
 
 /* =========================================================================
    7. 웹캠 손 인식 (MediaPipe Hands)
