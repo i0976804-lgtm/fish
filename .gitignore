@@ -1,0 +1,14 @@
+# Claude Code 로컬 설정(개인/머신 한정) — 공유하지 않음
+.claude/settings.local.json
+
+# 미리보기 검증용 디버그 산출물
+.claude/_dbg_*.png
+
+# OS / 편집기 부산물
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# 의존성(현재 없음 · 혹시 추가될 경우 대비)
+node_modules/

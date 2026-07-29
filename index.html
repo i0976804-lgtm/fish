@@ -1,0 +1,76 @@
+<!--
+  어항 커스텀 & 금붕어 먹이 주기
+  - 순수 HTML/CSS/JS. 빌드 도구 불필요 → GitHub Pages 즉시 배포 가능.
+  - 어항/물고기/수초는 assets 폴더의 "원본 이미지"를 사용.
+  - 웹캠 손 인식용으로만 MediaPipe Hands 를 CDN 으로 로드.
+-->
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>나만의 어항 · 금붕어 먹이 주기</title>
+<link rel="stylesheet" href="style.css" />
+
+<main id="stage">
+
+  <!-- 상단 안내 문구 (미니멀) -->
+  <p id="hint" class="hint">물을 클릭하면 금붕어에게 먹이를 줄 수 있어요</p>
+
+  <!-- 어항 컨테이너 -->
+  <div id="bowl">
+    <!-- 어항 원본 이미지 (assets/bowl.png) -->
+    <img id="bowlImg" alt="어항" />
+
+    <!-- 사용자가 배치한 장식 레이어 (물고기 뒤) -->
+    <div id="decoLayer"></div>
+
+    <!-- 물고기 + 먹이 캔버스 (클릭은 어항으로 통과) -->
+    <canvas id="fishCanvas"></canvas>
+
+    <!-- 유리 반사 살짝 (원본 위에 은은하게) -->
+    <div id="glassSheen"></div>
+  </div>
+
+  <!-- 로딩(이미지 배경제거/크롭 처리 중) -->
+  <div id="loading" class="loading">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <p>어항을 준비하는 중…</p>
+  </div>
+
+  <!-- 손 커서(먹이 조준점) -->
+  <div id="handCursor" class="hand-cursor" hidden></div>
+
+  <!-- 웹캠 미리보기 (우측 하단, 거울 반전) -->
+  <div id="camWrap" class="cam-wrap" hidden>
+    <video id="cam" playsinline muted></video>
+    <span class="cam-badge">CAM</span>
+  </div>
+
+  <!-- 하단 미니멀 툴바 -->
+  <div id="toolbar" class="toolbar">
+    <div id="palette" class="palette" role="toolbar" aria-label="장식 팔레트"></div>
+    <span class="divider" aria-hidden="true"></span>
+    <button id="addFishBtn" class="btn" type="button">🐟 물고기 추가</button>
+    <button id="camBtn" class="btn" type="button" aria-pressed="false">웹캠 켜기</button>
+    <button id="resetBtn" class="btn btn-ghost" type="button">초기화</button>
+  </div>
+
+  <!-- 장식 배치 모드 배너 -->
+  <div id="placeBanner" class="place-banner" hidden>
+    <span id="placeBannerText">장식을 놓을 위치를 클릭하세요</span>
+    <button id="placeCancel" class="mini-btn" type="button">취소</button>
+  </div>
+
+  <!-- 에셋(이미지) 누락 안내 -->
+  <div id="assetNote" class="asset-note" hidden>
+    <h2>이미지 파일을 넣어주세요</h2>
+    <p>첨부하신 원본 이미지를 아래 이름으로 <code>assets</code> 폴더에 저장하면 바로 반영됩니다.</p>
+    <ul id="assetList"></ul>
+    <p class="asset-path" id="assetPath"></p>
+  </div>
+</main>
+
+<!-- MediaPipe Hands (웹캠 손 인식 전용, 버전 고정) — 없어도 클릭 폴백으로 동작.
+     로드 실패 시 script.js 가 unpkg 로 자동 폴백한다. 카메라 프레임 공급은
+     자체 rAF 루프로 처리하므로 camera_utils 는 사용하지 않는다. -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+
+<script src="script.js"></script>
